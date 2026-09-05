@@ -9,6 +9,7 @@ CHANNEL_URL = "https://www.youtube.com/@saytanar68/videos"
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "@happydayfor").strip()
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 BOOTSTRAP_SEND = os.environ.get("BOOTSTRAP_SEND", "false").lower() == "true"
+FORCE_VIDEO_ID = os.environ.get("FORCE_VIDEO_ID", "").strip()
 
 
 def load_state():
@@ -22,22 +23,13 @@ def load_state():
 
 
 def save_state(ids):
-    # Keep the state small while retaining enough history to prevent duplicates.
     STATE_FILE.write_text(json.dumps(ids[:100], ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 def get_latest_videos():
     cmd = [
-        sys.executable,
-        "-m",
-        "yt_dlp",
-        "--flat-playlist",
-        "--playlist-end",
-        "15",
-        "--dump-single-json",
-        "--no-warnings",
-        "--skip-download",
-        CHANNEL_URL,
+        sys.executable, "-m", "yt_dlp", "--flat-playlist", "--playlist-end", "15",
+        "--dump-single-json", "--no-warnings", "--skip-download", CHANNEL_URL,
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, check=True)
     data = json.loads(result.stdout)
@@ -45,15 +37,12 @@ def get_latest_videos():
     for item in data.get("entries", []):
         if not item or not item.get("id"):
             continue
-        video_id = item["id"]
-        title = item.get("title") or "YouTube video"
-        videos.append({"id": video_id, "title": title})
+        videos.append({"id": item["id"], "title": item.get("title") or "YouTube video"})
     return videos
 
 
 def send_telegram(video):
     import requests
-
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     text = f"🎬 {video['title']}\nhttps://youtu.be/{video['id']}"
     response = requests.post(
@@ -76,10 +65,18 @@ def main():
         print("No videos found.")
         return
 
+    # Manual test: send the specified latest video once, even if it is already in state.
+    if FORCE_VIDEO_ID:
+        match = next((v for v in latest if v["id"] == FORCE_VIDEO_ID), None)
+        if match is None:
+            match = {"id": FORCE_VIDEO_ID, "title": "Latest YouTube video"}
+        send_telegram(match)
+        print(f"Forced test sent: {FORCE_VIDEO_ID}")
+        return
+
     sent = load_state()
     sent_set = set(sent)
 
-    # First run: establish a baseline so old videos are not sent as if they were new.
     if not sent and not BOOTSTRAP_SEND:
         save_state([v["id"] for v in latest])
         print("Initial baseline created; existing videos were not sent.")
